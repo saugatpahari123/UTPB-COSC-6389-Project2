@@ -1,5 +1,7 @@
 import math
 import random
+import tkinter as tk
+from tkinter import filedialog
 
 num_inputs = 10
 num_hidden_layers = 3
@@ -12,13 +14,29 @@ learning_rate = 0.1
 training_data_size = 100
 
 
-def sigmoid(total):
-    e = math.exp(total)
-    return e / (1 + e)
+# Activation functions and their derivatives
+def sigmoid(x):
+    return 1 / (1 + math.exp(-x))
+
+def sigmoid_derivative(x):
+    return x * (1 - x)
+
+def tanh(x):
+    return math.tanh(x)
+
+def tanh_derivative(x):
+    return 1 - x**2
+
+def relu(x):
+    return max(0, x)
+
+def relu_derivative(x):
+    return 1 if x > 0 else 0
+
 
 
 class Neuron:
-    def __init__(self, x, y, input_idx=-1, bias=0.0):
+    def __init__(self, x, y, input_idx=-1, bias=0.0, activation_func='sigmoid'):
         self.x = x
         self.y = y
         self.inputs = []
@@ -27,6 +45,24 @@ class Neuron:
         self.bias = bias
         self.result = 0.0
         self.error = 0.0
+        self.activation_func = activation_func
+
+    def activate(self, total):
+        if self.activation_func == 'sigmoid':
+            return sigmoid(total)
+        elif self.activation_func == 'tanh':
+            return tanh(total)
+        elif self.activation_func == 'relu':
+            return relu(total)
+
+    def activate_derivative(self, result):
+        if self.activation_func == 'sigmoid':
+            return sigmoid_derivative(result)
+        elif self.activation_func == 'tanh':
+            return tanh_derivative(result)
+        elif self.activation_func == 'relu':
+            return relu_derivative(result)
+
 
     def connect_input(self, in_n):
         in_axon = Axon(in_n, self)
@@ -175,14 +211,55 @@ class RandData:
             self.outputs.append(random.random())
 
 
-def train():
-    global training_data_size
-    network = Network()
-    for _ in range(training_data_size):
-        dat = RandData()
-        dat.generate()
-        network.train(dat)
+    def train():
+        global training_data_size
+        network = Network()
+        for _ in range(training_data_size):
+            dat = RandData()
+            dat.generate()
+            network.train(dat)
+
+class NNConfigUI(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Neural Network Configuration")
+        self.geometry("800x600")
+        
+        # Neural network configuration options
+        tk.Label(self, text="Activation Function:").grid(row=0, column=0, sticky="w")
+        self.activation_choice = tk.StringVar(value="sigmoid")
+        tk.OptionMenu(self, self.activation_choice, "sigmoid", "tanh", "relu").grid(row=0, column=1, sticky="w")
+        
+        tk.Label(self, text="Number of Hidden Layers:").grid(row=1, column=0, sticky="w")
+        self.num_hidden_layers = tk.IntVar(value=3)
+        tk.Entry(self, textvariable=self.num_hidden_layers).grid(row=1, column=1, sticky="w")
+
+        tk.Label(self, text="Width of Hidden Layers:").grid(row=2, column=0, sticky="w")
+        self.layer_width = tk.IntVar(value=12)
+        tk.Entry(self, textvariable=self.layer_width).grid(row=2, column=1, sticky="w")
+
+        # Dataset loading
+        tk.Button(self, text="Load Dataset", command=self.load_dataset).grid(row=3, column=0, sticky="w")
+        self.dataset_path = tk.StringVar(value="No file selected")
+        tk.Label(self, textvariable=self.dataset_path).grid(row=3, column=1, sticky="w")
+
+        # Run training
+        tk.Button(self, text="Start Training", command=self.start_training).grid(row=4, column=0, sticky="w")
+
+    def load_dataset(self):
+        file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xls;*.xlsx")])
+        if file_path:
+            self.dataset_path.set(file_path)
+
+    def start_training(self):
+        # Placeholder: replace with actual training logic
+        print("Training started with settings:")
+        print(f"Activation: {self.activation_choice.get()}")
+        print(f"Hidden Layers: {self.num_hidden_layers.get()}")
+        print(f"Layer Width: {self.layer_width.get()}")
 
 
 if __name__ == '__main__':
-    train()
+    ui = NNConfigUI()  # Instantiate your Tkinter class
+    ui.mainloop()      # Start the main loop
+
