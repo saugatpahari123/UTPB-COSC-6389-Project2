@@ -17,11 +17,36 @@ learning_rate = 0.1
 
 # Activation functions and derivatives
 def sigmoid(x):
-    return 1 / (1 + math.exp(-x))
+    try:
+        if x > 20:  # Avoid overflow for large positive values
+            return 1.0
+        elif x < -20:  # Avoid overflow for large negative values
+            return 0.0
+        return 1 / (1 + math.exp(-x))
+    except OverflowError:
+        logging.error(f"Overflow in sigmoid with x={x}")
+        return 0.0 if x < 0 else 1.0
+
 
 
 def sigmoid_derivative(x):
     return x * (1 - x)
+
+def tanh(x):
+    return math.tanh(x)
+
+
+def tanh_derivative(x):
+    return 1 - x**2
+
+
+def relu(x):
+    return max(0, x)
+
+
+def relu_derivative(x):
+    return 1 if x > 0 else 0
+
 
 
 # Neuron class
@@ -43,19 +68,28 @@ class Neuron:
             return sigmoid_derivative(result)
 
     def forward_prop(self, inputs):
-        if self.index >= 0:
-            self.result = inputs[self.index]
-        else:
-            total = sum(n.result * w for n, w in self.inputs) + self.bias
-            self.result = self.activate(total)
+        try:
+            if self.index >= 0:  # Input neuron
+                self.result = inputs[self.index]
+            else:  # Hidden or output neuron
+                total = sum(n.result * w for n, w in self.inputs) + self.bias
+                if abs(total) > 50:  # Log extreme values
+                    logging.warning(f"Extreme value in forward_prop: total={total}")
+                self.result = self.activate(total)
+        except Exception as e:
+            logging.error(f"Error during forward propagation in neuron {self}: {e}")
+            raise
+
 
     def back_prop(self, learning_rate):
-        gradient = self.activate_derivative(self.result)
-        for n, w in self.inputs:
-            n.error += self.error * w
-            new_weight = w - learning_rate * self.error * gradient * n.result
-            self.inputs[self.inputs.index((n, w))] = (n, new_weight)
-        self.bias -= learning_rate * self.error * gradient
+        if self.inputs:
+            gradient = self.activate_derivative(self.result)  # Calculate gradient
+            for n, w in self.inputs:
+                n.error += self.error * w
+                new_weight = w - learning_rate * self.error * gradient * n.result
+                self.inputs[self.inputs.index((n, w))] = (n, new_weight)
+            self.bias -= learning_rate * gradient * self.error
+
 
 
 # Neural Network
@@ -79,18 +113,28 @@ class Network:
                 out_neuron.inputs.append((src_neuron, random.uniform(-1, 1)))
 
     def forward_prop(self, inputs):
-        for layer in [self.inputs] + self.hidden_layers:
+    # Forward propagate through input layer
+        for neuron in self.inputs:
+            neuron.forward_prop(inputs)
+    # Forward propagate through hidden layers
+        for layer in self.hidden_layers:
             for neuron in layer:
                 neuron.forward_prop(inputs)
-        for out_neuron in self.outputs:
-            out_neuron.forward_prop(inputs)
+    # Forward propagate through output layer
+        for neuron in self.outputs:
+            neuron.forward_prop(inputs)
+
 
     def back_prop(self, targets):
+    # Set errors for output neurons
         for idx, out_neuron in enumerate(self.outputs):
             out_neuron.error = targets[idx] - out_neuron.result
+
+    # Propagate errors backward through hidden layers
         for layer in reversed(self.hidden_layers):
             for neuron in layer:
                 neuron.back_prop(learning_rate)
+
 
 
 # UI Class
@@ -149,14 +193,23 @@ class NNConfigUI(tk.Tk):
             logging.error(f"Error loading dataset: {e}")
 
     def generate_network(self):
+        target_col = self.numeric_data.columns[-1]
+        if self.numeric_data[target_col].nunique() > 2:
+            logging.info(f"Regression problem detected for target '{target_col}'. Setting num_outputs=1.")
+            self.num_outputs.set(1)  # Regression problem
+        else:
+            logging.info(f"Classification problem detected for target '{target_col}'. Setting num_outputs=2.")
+            self.num_outputs.set(2)  # Binary classification problem
+
         self.network = Network(
             self.num_inputs.get(),
             self.num_outputs.get(),
             self.num_hidden_layers.get(),
             self.layer_width.get(),
             self.activation_choice.get()
-        )
+    )
         logging.info("Neural network generated.")
+
 
     def start_training(self):
         if not hasattr(self, 'numeric_data'):
@@ -172,13 +225,15 @@ class NNConfigUI(tk.Tk):
     # Ensure the last column is used as the target
         target_col = self.numeric_data.columns[-1]
         logging.info(f"Using '{target_col}' as the target column.")
+        is_regression = self.num_outputs.get() == 1
 
         for epoch in range(epochs):
             correct_predictions = 0
 
             for _, row in self.numeric_data.iterrows():
                 inputs = row[:-1].values  # Use all columns except the last one as inputs
-                targets = [row.iloc[-1]]  # Ensure the target is treated as a list
+                targets = [row.iloc[-1]] if is_regression else [1 if row.iloc[-1] > 0.5 else 0]  # Regression vs Classification
+  # Ensure the target is treated as a list
 
                 if len(targets) != len(self.network.outputs):
                     logging.error(f"Mismatch between targets ({len(targets)}) and output neurons ({len(self.network.outputs)}).")
@@ -187,16 +242,22 @@ class NNConfigUI(tk.Tk):
                 self.network.forward_prop(inputs)
                 self.network.back_prop(targets)
 
-            # Compare predictions with targets
-                predicted = [1 if out.result >= 0.5 else 0 for out in self.network.outputs]
-                correct_predictions += int(predicted == targets)
+                if is_regression:
+                    predicted = [self.network.outputs[0].result]  # Single output for regression
+                    correct_predictions += 1  # For regression, accuracy is not directly calculated
+                else:
+                    predicted = [1 if out.result >= 0.5 else 0 for out in self.network.outputs]
+                    correct_predictions += int(predicted == targets)
 
-        # Calculate and log accuracy for this epoch
-            epoch_accuracy = correct_predictions / len(self.numeric_data)
-            accuracy.append(epoch_accuracy)
-            logging.info(f"Epoch {epoch + 1}/{epochs}: Accuracy = {epoch_accuracy:.2f}")
+        # Calculate and log accuracy for classification
+            if not is_regression:
+                epoch_accuracy = correct_predictions / len(self.numeric_data)
+                accuracy.append(epoch_accuracy)
+                logging.info(f"Epoch {epoch + 1}/{epochs}: Accuracy = {epoch_accuracy:.2f}")
 
-        self.show_graph(accuracy)
+    # Show graph only for classification problems
+        if not is_regression:
+            self.show_graph(accuracy)
 
 
     def show_graph(self, accuracy):
