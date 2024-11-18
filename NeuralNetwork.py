@@ -8,26 +8,29 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import pandas as pd
 
+
 # Logging setup
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Constants
-learning_rate = 0.1
+learning_rate = 0.01
+weight_penalty = 0.01  # L2 Regularization
 
+# Xavier initialization
+def xavier_init(input_size, output_size):
+    return random.uniform(-math.sqrt(6 / (input_size + output_size)), math.sqrt(6 / (input_size + output_size)))
 
 # Activation functions and derivatives
 def sigmoid(x):
     try:
-        if x > 20:  # Avoid overflow for large positive values
+        if x > 20:
             return 1.0
-        elif x < -20:  # Avoid overflow for large negative values
+        elif x < -20:
             return 0.0
         return 1 / (1 + math.exp(-x))
     except OverflowError:
         logging.error(f"Overflow in sigmoid with x={x}")
         return 0.0 if x < 0 else 1.0
-
-
 
 def sigmoid_derivative(x):
     return x * (1 - x)
@@ -35,24 +38,19 @@ def sigmoid_derivative(x):
 def tanh(x):
     return math.tanh(x)
 
-
 def tanh_derivative(x):
     return 1 - x**2
-
 
 def relu(x):
     return max(0, x)
 
-
 def relu_derivative(x):
     return 1 if x > 0 else 0
-
-
 
 # Neuron class
 class Neuron:
     def __init__(self, activation_func='sigmoid', input_idx=-1):
-        self.inputs = []  # List of (Neuron, float) tuples
+        self.inputs = []
         self.bias = random.uniform(-1, 1)
         self.result = 0.0
         self.error = 0.0
@@ -62,44 +60,49 @@ class Neuron:
     def activate(self, total):
         if self.activation_func == 'sigmoid':
             return sigmoid(total)
+        elif self.activation_func == 'tanh':
+            return tanh(total)
+        elif self.activation_func == 'relu':
+            return relu(total)
 
     def activate_derivative(self, result):
         if self.activation_func == 'sigmoid':
             return sigmoid_derivative(result)
+        elif self.activation_func == 'tanh':
+            return tanh_derivative(result)
+        elif self.activation_func == 'relu':
+            return relu_derivative(result)
 
     def forward_prop(self, inputs):
         try:
-            if self.index >= 0:  # Input neuron
+            if self.index >= 0:
                 self.result = inputs[self.index]
-            else:  # Hidden or output neuron
+            else:
                 total = sum(n.result * w for n, w in self.inputs) + self.bias
-                if abs(total) > 50:  # Log extreme values
+                if abs(total) > 50:
                     logging.warning(f"Extreme value in forward_prop: total={total}")
                 self.result = self.activate(total)
         except Exception as e:
-            logging.error(f"Error during forward propagation in neuron {self}: {e}")
+            logging.error(f"Error during forward propagation: {e}")
             raise
-
 
     def back_prop(self, learning_rate):
         if self.inputs:
-            gradient = self.activate_derivative(self.result)  # Calculate gradient
+            gradient = self.activate_derivative(self.result)
             for n, w in self.inputs:
                 n.error += self.error * w
-                new_weight = w - learning_rate * self.error * gradient * n.result
+                l2_term = weight_penalty * w
+                new_weight = w - learning_rate * (self.error * gradient * n.result + l2_term)
                 self.inputs[self.inputs.index((n, w))] = (n, new_weight)
             self.bias -= learning_rate * gradient * self.error
 
-
-
-# Neural Network
+# Neural Network class
 class Network:
     def __init__(self, num_inputs, num_outputs, hidden_layers, hidden_width, activation_func='sigmoid'):
         self.inputs = [Neuron(input_idx=i) for i in range(num_inputs)]
         self.hidden_layers = [[Neuron(activation_func=activation_func) for _ in range(hidden_width)]
                               for _ in range(hidden_layers)]
         self.outputs = [Neuron(activation_func=activation_func) for _ in range(num_outputs)]
-
         self.connect_layers()
 
     def connect_layers(self):
@@ -107,47 +110,39 @@ class Network:
             source = self.inputs if idx == 0 else self.hidden_layers[idx - 1]
             for neuron in layer:
                 for src_neuron in source:
-                    neuron.inputs.append((src_neuron, random.uniform(-1, 1)))
+                    neuron.inputs.append((src_neuron, xavier_init(len(source), len(layer))))
         for out_neuron in self.outputs:
             for src_neuron in self.hidden_layers[-1]:
-                out_neuron.inputs.append((src_neuron, random.uniform(-1, 1)))
+                out_neuron.inputs.append((src_neuron, xavier_init(len(self.hidden_layers[-1]), len(self.outputs))))
 
     def forward_prop(self, inputs):
-    # Forward propagate through input layer
         for neuron in self.inputs:
             neuron.forward_prop(inputs)
-    # Forward propagate through hidden layers
         for layer in self.hidden_layers:
             for neuron in layer:
                 neuron.forward_prop(inputs)
-    # Forward propagate through output layer
         for neuron in self.outputs:
             neuron.forward_prop(inputs)
 
-
     def back_prop(self, targets):
-    # Set errors for output neurons
         for idx, out_neuron in enumerate(self.outputs):
             out_neuron.error = targets[idx] - out_neuron.result
-
-    # Propagate errors backward through hidden layers
         for layer in reversed(self.hidden_layers):
             for neuron in layer:
                 neuron.back_prop(learning_rate)
 
-
-
-# UI Class
+# Neural Network UI class
 class NNConfigUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Neural Network Configuration")
         self.geometry("1024x768")
+        self.create_widgets()
 
-        # UI Elements
+    def create_widgets(self):
         tk.Label(self, text="Activation Function:").grid(row=0, column=0, sticky="w")
         self.activation_choice = StringVar(value="sigmoid")
-        tk.OptionMenu(self, self.activation_choice, "sigmoid").grid(row=0, column=1, sticky="w")
+        tk.OptionMenu(self, self.activation_choice, "sigmoid", "tanh", "relu").grid(row=0, column=1, sticky="w")
 
         tk.Label(self, text="Number of Hidden Layers:").grid(row=1, column=0, sticky="w")
         self.num_hidden_layers = IntVar(value=2)
@@ -162,7 +157,7 @@ class NNConfigUI(tk.Tk):
         tk.Entry(self, textvariable=self.num_inputs).grid(row=3, column=1, sticky="w")
 
         tk.Label(self, text="Number of Outputs:").grid(row=4, column=0, sticky="w")
-        self.num_outputs = IntVar(value=2)
+        self.num_outputs = IntVar(value=1)
         tk.Entry(self, textvariable=self.num_outputs).grid(row=4, column=1, sticky="w")
 
         tk.Button(self, text="Load Dataset", command=self.load_dataset).grid(row=5, column=0, sticky="w")
@@ -182,8 +177,6 @@ class NNConfigUI(tk.Tk):
             if panel.runModal() == 1:
                 file_path = str(panel.URLs()[0].path())
                 self.dataset = pd.read_csv(file_path)
-
-                # Automatically select numeric columns
                 self.numeric_data = self.dataset.select_dtypes(include=["number"])
                 self.dataset_path.set(file_path)
                 logging.info(f"Dataset loaded from {file_path}. Numeric columns: {list(self.numeric_data.columns)}")
@@ -193,13 +186,13 @@ class NNConfigUI(tk.Tk):
             logging.error(f"Error loading dataset: {e}")
 
     def generate_network(self):
+        if not hasattr(self, 'numeric_data'):
+            logging.error("Dataset not loaded. Please load the dataset before generating the network.")
+            return
+
         target_col = self.numeric_data.columns[-1]
-        if self.numeric_data[target_col].nunique() > 2:
-            logging.info(f"Regression problem detected for target '{target_col}'. Setting num_outputs=1.")
-            self.num_outputs.set(1)  # Regression problem
-        else:
-            logging.info(f"Classification problem detected for target '{target_col}'. Setting num_outputs=2.")
-            self.num_outputs.set(2)  # Binary classification problem
+        self.num_inputs.set(len(self.numeric_data.columns) - 1)
+        self.num_outputs.set(1 if self.numeric_data[target_col].nunique() > 2 else 2)
 
         self.network = Network(
             self.num_inputs.get(),
@@ -207,71 +200,25 @@ class NNConfigUI(tk.Tk):
             self.num_hidden_layers.get(),
             self.layer_width.get(),
             self.activation_choice.get()
-    )
-        logging.info("Neural network generated.")
-
+        )
+        logging.info("Neural network successfully generated.")
 
     def start_training(self):
-        if not hasattr(self, 'numeric_data'):
-            logging.error("No dataset loaded or no numeric columns available.")
-            return
-        if not hasattr(self, 'network'):
-            logging.error("Network not generated.")
+        if not hasattr(self, 'numeric_data') or not hasattr(self, 'network'):
+            logging.error("Dataset or network not initialized. Please load the dataset and generate the network first.")
             return
 
-        accuracy = []
-        epochs = 50
-
-    # Ensure the last column is used as the target
         target_col = self.numeric_data.columns[-1]
-        logging.info(f"Using '{target_col}' as the target column.")
-        is_regression = self.num_outputs.get() == 1
+        inputs = self.numeric_data.drop(target_col, axis=1).values
+        targets = self.numeric_data[target_col].values
 
+        epochs = 50
         for epoch in range(epochs):
-            correct_predictions = 0
-
-            for _, row in self.numeric_data.iterrows():
-                inputs = row[:-1].values  # Use all columns except the last one as inputs
-                targets = [row.iloc[-1]] if is_regression else [1 if row.iloc[-1] > 0.5 else 0]  # Regression vs Classification
-  # Ensure the target is treated as a list
-
-                if len(targets) != len(self.network.outputs):
-                    logging.error(f"Mismatch between targets ({len(targets)}) and output neurons ({len(self.network.outputs)}).")
-                    return
-
-                self.network.forward_prop(inputs)
-                self.network.back_prop(targets)
-
-                if is_regression:
-                    predicted = [self.network.outputs[0].result]  # Single output for regression
-                    correct_predictions += 1  # For regression, accuracy is not directly calculated
-                else:
-                    predicted = [1 if out.result >= 0.5 else 0 for out in self.network.outputs]
-                    correct_predictions += int(predicted == targets)
-
-        # Calculate and log accuracy for classification
-            if not is_regression:
-                epoch_accuracy = correct_predictions / len(self.numeric_data)
-                accuracy.append(epoch_accuracy)
-                logging.info(f"Epoch {epoch + 1}/{epochs}: Accuracy = {epoch_accuracy:.2f}")
-
-    # Show graph only for classification problems
-        if not is_regression:
-            self.show_graph(accuracy)
-
-
-    def show_graph(self, accuracy):
-        fig, ax = plt.subplots()
-        ax.plot(range(1, len(accuracy) + 1), accuracy, marker='o', label='Accuracy')
-        ax.set_xlabel('Epoch')
-        ax.set_ylabel('Accuracy')
-        ax.set_title('Training Accuracy Over Epochs')
-        ax.legend()
-
-        canvas = FigureCanvasTkAgg(fig, master=self)
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.grid(row=8, column=0, columnspan=2)
-        canvas.draw()
+            for i, input_row in enumerate(inputs):
+                target_row = [targets[i]]
+                self.network.forward_prop(input_row)
+                self.network.back_prop(target_row)
+            logging.info(f"Epoch {epoch + 1}/{epochs} completed.")
 
 
 if __name__ == "__main__":
