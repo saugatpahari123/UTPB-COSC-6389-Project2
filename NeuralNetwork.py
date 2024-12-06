@@ -1,226 +1,232 @@
-import math
-import random
 import tkinter as tk
-from tkinter import StringVar, IntVar
-import logging
-from AppKit import NSOpenPanel
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from tkinter import ttk, filedialog, messagebox
+import numpy as np
 import pandas as pd
-
-
-# Logging setup
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-
-# Constants
-learning_rate = 0.01
-weight_penalty = 0.01  # L2 Regularization
-
-# Xavier initialization
-def xavier_init(input_size, output_size):
-    return random.uniform(-math.sqrt(6 / (input_size + output_size)), math.sqrt(6 / (input_size + output_size)))
 
 # Activation functions and derivatives
 def sigmoid(x):
-    try:
-        if x > 20:
-            return 1.0
-        elif x < -20:
-            return 0.0
-        return 1 / (1 + math.exp(-x))
-    except OverflowError:
-        logging.error(f"Overflow in sigmoid with x={x}")
-        return 0.0 if x < 0 else 1.0
+    return 1 / (1 + np.exp(-x))
+
 
 def sigmoid_derivative(x):
     return x * (1 - x)
 
+
 def tanh(x):
-    return math.tanh(x)
+    return np.tanh(x)
+
 
 def tanh_derivative(x):
-    return 1 - x**2
+    return 1 - x ** 2
+
 
 def relu(x):
-    return max(0, x)
+    return np.maximum(0, x)
+
 
 def relu_derivative(x):
-    return 1 if x > 0 else 0
+    return np.where(x > 0, 1, 0)
 
-# Neuron class
-class Neuron:
-    def __init__(self, activation_func='sigmoid', input_idx=-1):
-        self.inputs = []
-        self.bias = random.uniform(-1, 1)
-        self.result = 0.0
-        self.error = 0.0
-        self.index = input_idx
-        self.activation_func = activation_func
 
-    def activate(self, total):
-        if self.activation_func == 'sigmoid':
-            return sigmoid(total)
-        elif self.activation_func == 'tanh':
-            return tanh(total)
-        elif self.activation_func == 'relu':
-            return relu(total)
+# Neural Network Implementation
+class NeuralNetwork:
+    def __init__(self, input_size, hidden_layers, output_size, activation):
+        self.input_size = input_size
+        self.hidden_layers = hidden_layers
+        self.output_size = output_size
+        self.activation = activation
+        self.weights = []
+        self.biases = []
+        self.a = []
+        self.activations = {
+            "sigmoid": (sigmoid, sigmoid_derivative),
+            "tanh": (tanh, tanh_derivative),
+            "relu": (relu, relu_derivative),
+        }
+        self.init_weights()
 
-    def activate_derivative(self, result):
-        if self.activation_func == 'sigmoid':
-            return sigmoid_derivative(result)
-        elif self.activation_func == 'tanh':
-            return tanh_derivative(result)
-        elif self.activation_func == 'relu':
-            return relu_derivative(result)
+    def init_weights(self):
+        layers = [self.input_size] + self.hidden_layers + [self.output_size]
+        for i in range(len(layers) - 1):
+            self.weights.append(np.random.randn(layers[i], layers[i + 1]) * 0.1)
+            self.biases.append(np.random.randn(layers[i + 1]) * 0.1)
+            self.a.append(np.zeros((1, layers[i])))
+        self.a.append(np.zeros((1, layers[-1])))
 
-    def forward_prop(self, inputs):
-        try:
-            if self.index >= 0:
-                self.result = inputs[self.index]
-            else:
-                total = sum(n.result * w for n, w in self.inputs) + self.bias
-                if abs(total) > 50:
-                    logging.warning(f"Extreme value in forward_prop: total={total}")
-                self.result = self.activate(total)
-        except Exception as e:
-            logging.error(f"Error during forward propagation: {e}")
-            raise
+    def forward(self, x):
+        self.a[0] = x
+        activation_func = self.activations[self.activation][0]
+        for i in range(len(self.weights)):
+            z = np.dot(self.a[i], self.weights[i]) + self.biases[i]
+            self.a[i + 1] = activation_func(z)
+        return self.a[-1]
 
-    def back_prop(self, learning_rate):
-        if self.inputs:
-            gradient = self.activate_derivative(self.result)
-            for n, w in self.inputs:
-                n.error += self.error * w
-                l2_term = weight_penalty * w
-                new_weight = w - learning_rate * (self.error * gradient * n.result + l2_term)
-                self.inputs[self.inputs.index((n, w))] = (n, new_weight)
-            self.bias -= learning_rate * gradient * self.error
+    def backward(self, x, y, learning_rate):
+        m = x.shape[0]
+        derivative_func = self.activations[self.activation][1]
 
-# Neural Network class
-class Network:
-    def __init__(self, num_inputs, num_outputs, hidden_layers, hidden_width, activation_func='sigmoid'):
-        self.inputs = [Neuron(input_idx=i) for i in range(num_inputs)]
-        self.hidden_layers = [[Neuron(activation_func=activation_func) for _ in range(hidden_width)]
-                              for _ in range(hidden_layers)]
-        self.outputs = [Neuron(activation_func=activation_func) for _ in range(num_outputs)]
-        self.connect_layers()
+        delta = self.a[-1] - y
+        for i in range(len(self.weights) - 1, -1, -1):
+            dW = np.dot(self.a[i].T, delta) / m
+            db = np.sum(delta, axis=0, keepdims=True) / m
 
-    def connect_layers(self):
-        for idx, layer in enumerate(self.hidden_layers):
-            source = self.inputs if idx == 0 else self.hidden_layers[idx - 1]
-            for neuron in layer:
-                for src_neuron in source:
-                    neuron.inputs.append((src_neuron, xavier_init(len(source), len(layer))))
-        for out_neuron in self.outputs:
-            for src_neuron in self.hidden_layers[-1]:
-                out_neuron.inputs.append((src_neuron, xavier_init(len(self.hidden_layers[-1]), len(self.outputs))))
+            self.weights[i] -= learning_rate * dW
+            self.biases[i] -= learning_rate * db.reshape(self.biases[i].shape)
 
-    def forward_prop(self, inputs):
-        for neuron in self.inputs:
-            neuron.forward_prop(inputs)
-        for layer in self.hidden_layers:
-            for neuron in layer:
-                neuron.forward_prop(inputs)
-        for neuron in self.outputs:
-            neuron.forward_prop(inputs)
+            if i > 0:
+                delta = np.dot(delta, self.weights[i].T) * derivative_func(self.a[i])
 
-    def back_prop(self, targets):
-        for idx, out_neuron in enumerate(self.outputs):
-            out_neuron.error = targets[idx] - out_neuron.result
-        for layer in reversed(self.hidden_layers):
-            for neuron in layer:
-                neuron.back_prop(learning_rate)
+    def train(self, x, y, epochs, learning_rate, update_callback=None):
+        for epoch in range(epochs):
+            self.forward(x)
+            self.backward(x, y, learning_rate)
+            if update_callback:
+                update_callback()
+            if epoch % 100 == 0:
+                loss = np.mean((self.a[-1] - y) ** 2)
+                print(f"Epoch {epoch}, Loss: {loss}")
 
-# Neural Network UI class
-class NNConfigUI(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Neural Network Configuration")
-        self.geometry("1024x768")
-        self.create_widgets()
 
-    def create_widgets(self):
-        tk.Label(self, text="Activation Function:").grid(row=0, column=0, sticky="w")
-        self.activation_choice = StringVar(value="sigmoid")
-        tk.OptionMenu(self, self.activation_choice, "sigmoid", "tanh", "relu").grid(row=0, column=1, sticky="w")
+class NeuralNetworkApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Enhanced Neural Network Visualizer")
+        self.create_ui()
 
-        tk.Label(self, text="Number of Hidden Layers:").grid(row=1, column=0, sticky="w")
-        self.num_hidden_layers = IntVar(value=2)
-        tk.Entry(self, textvariable=self.num_hidden_layers).grid(row=1, column=1, sticky="w")
+    def create_ui(self):
+        style = ttk.Style()
+        style.configure("TButton", padding=6, relief="flat", font=("Helvetica", 10))
+        style.configure("TLabel", font=("Helvetica", 10))
+        style.configure("TEntry", font=("Helvetica", 10))
 
-        tk.Label(self, text="Width of Hidden Layers:").grid(row=2, column=0, sticky="w")
-        self.layer_width = IntVar(value=5)
-        tk.Entry(self, textvariable=self.layer_width).grid(row=2, column=1, sticky="w")
+        menu_bar = tk.Menu(self.root)
+        self.root.config(menu=menu_bar)
 
-        tk.Label(self, text="Number of Inputs:").grid(row=3, column=0, sticky="w")
-        self.num_inputs = IntVar(value=3)
-        tk.Entry(self, textvariable=self.num_inputs).grid(row=3, column=1, sticky="w")
+        file_menu = tk.Menu(menu_bar, tearoff=0)
+        menu_bar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Load Dataset", command=self.load_dataset)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
 
-        tk.Label(self, text="Number of Outputs:").grid(row=4, column=0, sticky="w")
-        self.num_outputs = IntVar(value=1)
-        tk.Entry(self, textvariable=self.num_outputs).grid(row=4, column=1, sticky="w")
+        help_menu = tk.Menu(menu_bar, tearoff=0)
+        menu_bar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self.show_about)
 
-        tk.Button(self, text="Load Dataset", command=self.load_dataset).grid(row=5, column=0, sticky="w")
-        self.dataset_path = StringVar(value="No file selected")
-        tk.Label(self, textvariable=self.dataset_path).grid(row=5, column=1, sticky="w")
+        frame = ttk.Frame(self.root, padding="10")
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        tk.Button(self, text="Generate Network", command=self.generate_network).grid(row=6, column=0, sticky="w")
-        tk.Button(self, text="Start Training", command=self.start_training).grid(row=7, column=0, sticky="w")
+        ttk.Label(frame, text="Number of Inputs:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.input_size = tk.IntVar(value=2)
+        ttk.Entry(frame, textvariable=self.input_size).grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(frame, text="Hidden Layers (comma-separated):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.hidden_layers = tk.StringVar(value="4,4")
+        ttk.Entry(frame, textvariable=self.hidden_layers).grid(row=1, column=1, padx=5, pady=5)
+
+        ttk.Label(frame, text="Number of Outputs:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        self.output_size = tk.IntVar(value=1)
+        ttk.Entry(frame, textvariable=self.output_size).grid(row=2, column=1, padx=5, pady=5)
+
+        ttk.Label(frame, text="Activation Function:").grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.activation = tk.StringVar(value="sigmoid")
+        ttk.Combobox(frame, textvariable=self.activation, values=["sigmoid", "tanh", "relu"]).grid(row=3, column=1, padx=5, pady=5)
+
+        ttk.Button(frame, text="Generate Network", command=self.generate_network).grid(row=4, column=0, padx=5, pady=5)
+        ttk.Button(frame, text="Load Dataset", command=self.load_dataset).grid(row=4, column=1, padx=5, pady=5)
+        ttk.Button(frame, text="Start Training", command=self.start_training_with_dataset).grid(row=4, column=2, padx=5, pady=5)
+
+        self.progress = ttk.Progressbar(frame, orient=tk.HORIZONTAL, length=200, mode="determinate")
+        self.progress.grid(row=5, column=0, columnspan=3, pady=10)
+
+        self.canvas = tk.Canvas(self.root, width=800, height=600, bg="white")
+        self.canvas.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+    def show_about(self):
+        messagebox.showinfo("About", "Enhanced Neural Network Visualizer\nDeveloped by Saugat Pahari")
 
     def load_dataset(self):
-        try:
-            panel = NSOpenPanel.openPanel()
-            panel.setCanChooseFiles_(True)
-            panel.setCanChooseDirectories_(False)
-            panel.setAllowsMultipleSelection_(False)
-            panel.setAllowedFileTypes_(["csv"])
-            if panel.runModal() == 1:
-                file_path = str(panel.URLs()[0].path())
-                self.dataset = pd.read_csv(file_path)
-                self.numeric_data = self.dataset.select_dtypes(include=["number"])
-                self.dataset_path.set(file_path)
-                logging.info(f"Dataset loaded from {file_path}. Numeric columns: {list(self.numeric_data.columns)}")
-            else:
-                logging.warning("No file selected.")
-        except Exception as e:
-            logging.error(f"Error loading dataset: {e}")
+        file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+        if file_path:
+            data = pd.read_csv(file_path)
+
+            X = data.iloc[:, :-1].values
+            y = data.iloc[:, -1].values
+            X = (X - X.min(axis=0)) / (X.max(axis=0) - X.min(axis=0) + 1e-7)
+
+            if y.dtype == 'object':
+                unique_classes = np.unique(y)
+                class_mapping = {label: idx for idx, label in enumerate(unique_classes)}
+                y = np.vectorize(class_mapping.get)(y)
+
+            y = y.reshape(-1, 1)
+
+            self.X = X
+            self.y = y
+
+            print("Dataset loaded successfully")
+
+    def start_training_with_dataset(self):
+        if not hasattr(self, 'network'):
+            print("Network has not been initialized yet!")
+            return
+        if not hasattr(self, 'X') or not hasattr(self, 'y'):
+            print("Dataset has not been loaded yet!")
+            return
+
+        def update_visualization():
+            self.visualize_network()
+
+        def train_step(epoch=0):
+            if epoch < 1000:
+                self.network.train(self.X, self.y, epochs=1, learning_rate=0.01, update_callback=update_visualization)
+                self.visualize_network()
+                self.root.after(10, train_step, epoch + 1)
+
+        train_step()
 
     def generate_network(self):
-        if not hasattr(self, 'numeric_data'):
-            logging.error("Dataset not loaded. Please load the dataset before generating the network.")
-            return
+        input_size = self.input_size.get()
+        hidden_layers = list(map(int, self.hidden_layers.get().split(",")))
+        output_size = self.output_size.get()
+        activation = self.activation.get()
+        self.network = NeuralNetwork(input_size, hidden_layers, output_size, activation)
+        self.visualize_network()
 
-        target_col = self.numeric_data.columns[-1]
-        self.num_inputs.set(len(self.numeric_data.columns) - 1)
-        self.num_outputs.set(1 if self.numeric_data[target_col].nunique() > 2 else 2)
+    def visualize_network(self):
+        self.canvas.delete("all")
+        layers = [self.network.input_size] + self.network.hidden_layers + [self.network.output_size]
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        layer_gap = width / len(layers)
 
-        self.network = Network(
-            self.num_inputs.get(),
-            self.num_outputs.get(),
-            self.num_hidden_layers.get(),
-            self.layer_width.get(),
-            self.activation_choice.get()
-        )
-        logging.info("Neural network successfully generated.")
+        layer_positions = []
+        for i, nodes in enumerate(layers):
+            x = layer_gap * i + layer_gap / 2
+            y_spacing = height / (nodes + 1)
+            layer_positions.append([(x, y_spacing * (j + 1)) for j in range(nodes)])
 
-    def start_training(self):
-        if not hasattr(self, 'numeric_data') or not hasattr(self, 'network'):
-            logging.error("Dataset or network not initialized. Please load the dataset and generate the network first.")
-            return
+        sample_index = 0  # Index of the sample to visualize
 
-        target_col = self.numeric_data.columns[-1]
-        inputs = self.numeric_data.drop(target_col, axis=1).values
-        targets = self.numeric_data[target_col].values
+        for layer_idx, layer in enumerate(layer_positions):
+            for node_idx, (x, y) in enumerate(layer):
+                activation = self.network.a[layer_idx][sample_index][node_idx] if layer_idx < len(self.network.a) else 0
+                activation_normalized = (activation - np.min(activation)) / (np.ptp(activation) + 1e-7)
+                activation_normalized = max(0, min(activation_normalized, 1))
+                color = f"#{int(255 * (1 - activation_normalized)):02x}{int(255 * activation_normalized):02x}00"
+                self.canvas.create_oval(x - 10, y - 10, x + 10, y + 10, fill=color, outline="black")
 
-        epochs = 50
-        for epoch in range(epochs):
-            for i, input_row in enumerate(inputs):
-                target_row = [targets[i]]
-                self.network.forward_prop(input_row)
-                self.network.back_prop(target_row)
-            logging.info(f"Epoch {epoch + 1}/{epochs} completed.")
+        for i in range(len(layer_positions) - 1):
+            for start_idx, start in enumerate(layer_positions[i]):
+                for end_idx, end in enumerate(layer_positions[i + 1]):
+                    weight = self.network.weights[i][start_idx, end_idx]
+                    thickness = max(1, int(abs(weight * 5)))
+                    color = "blue" if weight > 0 else "red"
+                    self.canvas.create_line(start[0], start[1], end[0], end[1], fill=color, width=thickness)
+
+        self.canvas.update_idletasks()
 
 
 if __name__ == "__main__":
-    app = NNConfigUI()
-    app.mainloop()
+    root = tk.Tk()
+    app = NeuralNetworkApp(root)
+    root.mainloop()
