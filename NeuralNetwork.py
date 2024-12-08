@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 # Activation functions and derivatives
 def sigmoid(x):
@@ -38,6 +39,7 @@ class NeuralNetwork:
         self.weights = []
         self.biases = []
         self.a = []
+        self.loss_history = []  # Store loss values for plotting
         self.activations = {
             "sigmoid": (sigmoid, sigmoid_derivative),
             "tanh": (tanh, tanh_derivative),
@@ -78,19 +80,42 @@ class NeuralNetwork:
 
     def train(self, x, y, epochs, learning_rate, update_callback=None):
         for epoch in range(epochs):
+            # Forward and backward propagation
             self.forward(x)
             self.backward(x, y, learning_rate)
+        
+            # Calculate and record the loss
+            loss = np.mean((self.a[-1] - y) ** 2)
+            self.loss_history.append(loss)  # Append loss to history
+        
+            # Optional callback for visualization updates
             if update_callback:
                 update_callback()
+        
+            # Log loss for debugging
             if epoch % 100 == 0:
-                loss = np.mean((self.a[-1] - y) ** 2)
                 print(f"Epoch {epoch}, Loss: {loss}")
+
+    def plot_loss_graph(self):
+        if not self.network.loss_history:
+            print("Loss history is empty. Ensure training has occurred before plotting.")
+            return
+
+        plt.figure(figsize=(8, 5))
+        plt.plot(self.network.loss_history, label="Loss per Epoch", color="blue")
+        plt.xlabel("Epochs")
+        plt.ylabel("Loss")
+        plt.title("Training Loss Over Epochs")
+        plt.legend()
+        plt.grid()
+        plt.show()
+
 
 
 class NeuralNetworkApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Enhanced Neural Network Visualizer")
+        self.root.title("Neural Network Visualizer Developed by Saugat Pahari")
         self.create_ui()
 
     def create_ui(self):
@@ -116,7 +141,7 @@ class NeuralNetworkApp:
         frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         ttk.Label(frame, text="Number of Inputs:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.input_size = tk.IntVar(value=2)
+        self.input_size = tk.IntVar(value=5)
         ttk.Entry(frame, textvariable=self.input_size).grid(row=0, column=1, padx=5, pady=5)
 
         ttk.Label(frame, text="Hidden Layers (comma-separated):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
@@ -142,7 +167,7 @@ class NeuralNetworkApp:
         self.canvas.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S))
 
     def show_about(self):
-        messagebox.showinfo("About", "Enhanced Neural Network Visualizer\nDeveloped by Saugat Pahari")
+        messagebox.showinfo("About", "Neural Network Visualizer\nDeveloped by Saugat Pahari")
 
     def load_dataset(self):
         file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
@@ -172,6 +197,8 @@ class NeuralNetworkApp:
         if not hasattr(self, 'X') or not hasattr(self, 'y'):
             print("Dataset has not been loaded yet!")
             return
+        self.network.train(self.X, self.y, epochs=1000, learning_rate=0.01)
+        self.plot_loss_graph()  # Plot the loss graph after training
 
         def update_visualization():
             self.visualize_network()
@@ -224,6 +251,21 @@ class NeuralNetworkApp:
                     self.canvas.create_line(start[0], start[1], end[0], end[1], fill=color, width=thickness)
 
         self.canvas.update_idletasks()
+
+
+    def plot_loss_graph(self):
+        if not self.network.loss_history:
+            print("Loss history is empty. Training might not have occurred.")
+            return
+
+        plt.figure(figsize=(8, 5))
+        plt.plot(self.network.loss_history, label="Loss per Epoch", color="blue")
+        plt.xlabel("Epochs")
+        plt.ylabel("Loss")
+        plt.title("Training Loss Over Epochs")
+        plt.legend()
+        plt.grid()
+        plt.show()   
 
 
 if __name__ == "__main__":
